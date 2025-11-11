@@ -1,0 +1,294 @@
+from pprint import pprint
+
+import pandas as pd
+import requests
+import json
+import time
+from typing import List, Dict, Any
+import logging
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class BrazeUserUploader:
+    def __init__(self, api_key: str, base_url: str = "https://rest.iad-07.braze.com"):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+
+    def convert_csv_to_braze_format(self, csv_file_path: str) -> List[Dict[str, Any]]:
+        """
+        CSV 파일을 읽어서 Braze API 형식으로 변환
+        """
+        logger.info(f"CSV 파일 읽기 시작: {csv_file_path}")
+
+        # CSV 파일 읽기
+        df = pd.read_csv(csv_file_path)
+        logger.info(f"총 {len(df)}개의 사용자 데이터를 읽었습니다.")
+
+        braze_attributes = []
+
+        for index, row in df.iterrows():
+            try:
+                # 기본 속성 구성
+                attributes = {}
+
+                # 필수 식별자 (email 또는 external_id 중 하나)
+                if pd.notna(row.get('email')) and row['email'].strip():
+                    attributes['email'] = row['email'].strip()
+
+                if pd.notna(row.get('external_id')) and row['external_id'].strip():
+                    attributes['external_id'] = row['external_id'].strip()
+
+                # email과 external_id가 모두 없으면 건너뛰기
+                if not attributes.get('email') and not attributes.get('external_id'):
+                    logger.warning(f"행 {index + 1}: email과 external_id가 모두 없습니다. 건너뜁니다.")
+                    continue
+
+                # 추가 속성들
+                if pd.notna(row.get('first_name')):
+                    attributes['first_name'] = row['first_name']
+
+                if pd.notna(row.get('phone')):
+                    phone_str = str(row['phone'])
+
+                    if phone_str.startswith('010'):
+                        phone_str = f"+82{phone_str[1:]}"
+                    elif phone_str.startswith('82'):
+                        phone_str = f"+{phone_str}"
+
+                    attributes['phone'] = phone_str
+
+                if pd.notna(row.get('user_type')):
+                    attributes['user_type'] = row['user_type']
+
+                if pd.notna(row.get('is_marketing')):
+                    attributes['is_marketing'] = bool(row['is_marketing'])
+
+                if pd.notna(row.get('signup_date')):
+                    attributes['signup_date'] = row['signup_date']
+
+                if pd.notna(row.get('business')):
+                    attributes['business'] = row['business']
+
+                # applied_business 처리 (JSON 문자열인 경우 파싱)
+                if pd.notna(row.get('applied_business')):
+                    applied_business = row['applied_business']
+                    if isinstance(applied_business, str) and applied_business.startswith('['):
+                        try:
+                            # JSON 배열 문자열을 실제 배열로 변환
+                            attributes['applied_business'] = json.loads(applied_business)
+                        except json.JSONDecodeError:
+                            # JSON 파싱 실패시 문자열 배열 형태로 파싱 시도
+                            try:
+                                # [item1,item2] 형태를 ['item1', 'item2']로 변환
+                                clean_str = applied_business.strip('[]')
+                                if clean_str:
+                                    attributes['applied_business'] = [item.strip().strip('"\'') for item in
+                                                                      clean_str.split(',')]
+                                else:
+                                    attributes['applied_business'] = []
+                            except:
+                                # 모든 파싱 실패시 문자열 그대로 사용
+                                attributes['applied_business'] = applied_business
+                    else:
+                        attributes['applied_business'] = applied_business
+
+                # in_progress_business 처리
+                if pd.notna(row.get('in_progress_business')):
+                    in_progress = row['in_progress_business']
+                    if isinstance(in_progress, str) and in_progress.startswith('['):
+                        try:
+                            attributes['in_progress_business'] = json.loads(in_progress)
+                        except json.JSONDecodeError:
+                            # JSON 파싱 실패시 문자열 배열 형태로 파싱 시도
+                            try:
+                                clean_str = in_progress.strip('[]')
+                                if clean_str:
+                                    attributes['in_progress_business'] = [item.strip().strip('"\'') for item in
+                                                                          clean_str.split(',')]
+                                else:
+                                    attributes['in_progress_business'] = []
+                            except:
+                                attributes['in_progress_business'] = in_progress
+                    else:
+                        attributes['in_progress_business'] = in_progress
+
+                # completed_business 처리
+                if pd.notna(row.get('completed_business')):
+                    completed = row['completed_business']
+                    if isinstance(completed, str) and completed.startswith('['):
+                        try:
+                            attributes['completed_business'] = json.loads(completed)
+                        except json.JSONDecodeError:
+                            # JSON 파싱 실패시 문자열 배열 형태로 파싱 시도
+                            try:
+                                clean_str = completed.strip('[]')
+                                if clean_str:
+                                    attributes['completed_business'] = [item.strip().strip('"\'') for item in
+                                                                        clean_str.split(',')]
+                                else:
+                                    attributes['completed_business'] = []
+                            except:
+                                attributes['completed_business'] = completed
+                    else:
+                        attributes['completed_business'] = completed
+
+                if pd.notna(row.get('is_test')):
+                    attributes['is_test'] = bool(row['is_test'])
+
+                if pd.notna(row.get('kdt_funnel_stage')):
+                    attributes['kdt_funnel_stage'] = row['kdt_funnel_stage']
+
+                if pd.notna(row.get('hh_funnel_stage')):
+                    attributes['hh_funnel_stage'] = row['hh_funnel_stage']
+
+                if pd.notna(row.get('has_card')):
+                    attributes['has_card'] = bool(row['has_card'])
+
+                braze_attributes.append(attributes)
+
+                # 디버깅을 위한 로그 (처음 5개 행만)
+                if index < 5:
+                    logger.info(f"행 {index + 1} 변환 결과:")
+                    logger.info(f"  - applied_business: {attributes.get('applied_business', 'N/A')}")
+                    logger.info(f"  - in_progress_business: {attributes.get('in_progress_business', 'N/A')}")
+                    logger.info(f"  - completed_business: {attributes.get('completed_business', 'N/A')}")
+
+            except Exception as e:
+                logger.error(f"행 {index + 1} 처리 중 오류 발생: {str(e)}")
+                continue
+
+        logger.info(f"변환 완료: {len(braze_attributes)}개의 유효한 사용자 속성")
+        return braze_attributes
+
+    def upload_users_batch(self, attributes_list: List[Dict[str, Any]], batch_size: int = 50) -> bool:
+        """
+        사용자 속성을 배치로 업로드
+        """
+        total_batches = (len(attributes_list) + batch_size - 1) // batch_size
+        success_count = 0
+        error_count = 0
+        failed_batches = []  # 실패한 배치를 저장
+
+        for i in range(0, len(attributes_list), batch_size):
+            batch = attributes_list[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+
+            logger.info(f"배치 {batch_num}/{total_batches} 처리 중... ({len(batch)}개 사용자)")
+
+            payload = {
+                "attributes": batch
+            }
+
+            try:
+                response = requests.post(
+                    f"{self.base_url}/users/track",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=30
+                )
+
+                if response.status_code == 201:
+                    logger.info(f"배치 {batch_num} 성공적으로 업로드됨")
+                    success_count += len(batch)
+                else:
+                    logger.error(f"배치 {batch_num} 업로드 실패: {response.status_code} - {response.text}")
+                    error_count += len(batch)
+                    failed_batches.append((batch_num, batch, payload))
+
+                # API 레이트 리미트를 위한 대기
+                time.sleep(0.1)
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"배치 {batch_num} 요청 실패: {str(e)}")
+                error_count += len(batch)
+                failed_batches.append((batch_num, batch, payload))
+
+        # 실패한 배치 재시도
+        if failed_batches:
+            logger.info(f"\n{len(failed_batches)}개의 실패한 배치를 재시도합니다...")
+            retry_success_count = 0
+            retry_error_count = 0
+
+            for batch_num, batch, payload in failed_batches:
+                logger.info(f"배치 {batch_num} 재시도 중... ({len(batch)}개 사용자)")
+
+                try:
+                    response = requests.post(
+                        f"{self.base_url}/users/track",
+                        headers=self.headers,
+                        json=payload,
+                        timeout=30
+                    )
+
+                    if response.status_code == 201:
+                        logger.info(f"배치 {batch_num} 재시도 성공")
+                        retry_success_count += len(batch)
+                        success_count += len(batch)
+                        error_count -= len(batch)
+                    else:
+                        logger.error(f"배치 {batch_num} 재시도 실패: {response.status_code} - {response.text}")
+                        logger.error(f"실패한 배치 {batch_num}의 payload 상세:")
+                        logger.error(json.dumps(payload, indent=2, ensure_ascii=False))
+                        retry_error_count += len(batch)
+
+                    # API 레이트 리미트를 위한 대기
+                    time.sleep(0.2)
+
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"배치 {batch_num} 재시도 요청 실패: {str(e)}")
+                    logger.error(f"실패한 배치 {batch_num}의 payload 상세:")
+                    logger.error(json.dumps(payload, indent=2, ensure_ascii=False))
+                    retry_error_count += len(batch)
+
+            logger.info(f"재시도 완료 - 성공: {retry_success_count}, 실패: {retry_error_count}")
+
+        logger.info(f"전체 업로드 완료 - 성공: {success_count}, 실패: {error_count}")
+        return error_count == 0
+
+    def upload_from_csv(self, csv_file_path: str, batch_size: int = 50) -> bool:
+        """
+        CSV 파일에서 사용자 데이터를 읽어서 Braze에 업로드
+        """
+        try:
+            # CSV를 Braze 형식으로 변환
+            braze_attributes = self.convert_csv_to_braze_format(csv_file_path)
+
+            if not braze_attributes:
+                logger.warning("업로드할 유효한 사용자 데이터가 없습니다.")
+                return False
+
+            # 배치로 업로드
+            return self.upload_users_batch(braze_attributes, batch_size)
+
+        except Exception as e:
+            logger.error(f"CSV 업로드 중 오류 발생: {str(e)}")
+            return False
+
+
+def main():
+    # API_KEY = "e0293138-6884-4230-8d9c-d7676fa4a742"
+    API_KEY = "fbf4d3a0-49e4-4641-86e2-60d3948c7489"
+    CSV_FILE_PATH = "/Users/kevin/Downloads/braze_user_202510301036.csv"
+
+    # Braze 업로더 생성
+    uploader = BrazeUserUploader(API_KEY)
+
+    # CSV 파일에서 사용자 데이터 업로드
+    logger.info("Braze 사용자 데이터 업로드 시작")
+    success = uploader.upload_from_csv(CSV_FILE_PATH, batch_size=50)
+
+    if success:
+        logger.info("모든 사용자 데이터가 성공적으로 업로드되었습니다.")
+    else:
+        logger.error("일부 사용자 데이터 업로드에 실패했습니다.")
+
+
+if __name__ == "__main__":
+    main()
