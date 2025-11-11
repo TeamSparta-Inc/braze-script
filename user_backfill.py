@@ -6,6 +6,9 @@ import json
 import time
 from typing import List, Dict, Any
 import logging
+import boto3
+from io import StringIO
+import os
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -13,23 +16,51 @@ logger = logging.getLogger(__name__)
 
 
 class BrazeUserUploader:
-    def __init__(self, api_key: str, base_url: str = "https://rest.iad-07.braze.com"):
+    def __init__(self, api_key: str, base_url: str = "https://rest.iad-07.braze.com",
+                 aws_profile: str = "admin", s3_bucket: str = "sparta-braze-currents"):
         self.api_key = api_key
         self.base_url = base_url
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
+        self.s3_bucket = s3_bucket
 
-    def convert_csv_to_braze_format(self, csv_file_path: str) -> List[Dict[str, Any]]:
+        # S3 클라이언트 초기화
+        session = boto3.Session(profile_name=aws_profile)
+        self.s3_client = session.client('s3')
+
+    def read_csv_from_s3(self, s3_key: str) -> pd.DataFrame:
+        """
+        S3에서 CSV 파일을 읽어서 DataFrame으로 반환
+        """
+        logger.info(f"S3에서 CSV 파일 읽기 시작: s3://{self.s3_bucket}/{s3_key}")
+
+        try:
+            # S3에서 파일 읽기
+            response = self.s3_client.get_object(Bucket=self.s3_bucket, Key=s3_key)
+            csv_content = response['Body'].read().decode('utf-8')
+
+            # DataFrame으로 변환
+            df = pd.read_csv(StringIO(csv_content))
+            logger.info(f"총 {len(df)}개의 사용자 데이터를 읽었습니다.")
+            return df
+
+        except Exception as e:
+            logger.error(f"S3에서 파일 읽기 실패: {str(e)}")
+            raise
+
+    def convert_csv_to_braze_format(self, csv_source: str, from_s3: bool = True) -> List[Dict[str, Any]]:
         """
         CSV 파일을 읽어서 Braze API 형식으로 변환
+        csv_source: S3 키(from_s3=True) 또는 로컬 파일 경로(from_s3=False)
         """
-        logger.info(f"CSV 파일 읽기 시작: {csv_file_path}")
-
-        # CSV 파일 읽기
-        df = pd.read_csv(csv_file_path)
-        logger.info(f"총 {len(df)}개의 사용자 데이터를 읽었습니다.")
+        if from_s3:
+            df = self.read_csv_from_s3(csv_source)
+        else:
+            logger.info(f"로컬 CSV 파일 읽기 시작: {csv_source}")
+            df = pd.read_csv(csv_source)
+            logger.info(f"총 {len(df)}개의 사용자 데이터를 읽었습니다.")
 
         braze_attributes = []
 
@@ -252,13 +283,14 @@ class BrazeUserUploader:
         logger.info(f"전체 업로드 완료 - 성공: {success_count}, 실패: {error_count}")
         return error_count == 0
 
-    def upload_from_csv(self, csv_file_path: str, batch_size: int = 50) -> bool:
+    def upload_from_csv(self, csv_source: str, batch_size: int = 50, from_s3: bool = True) -> bool:
         """
         CSV 파일에서 사용자 데이터를 읽어서 Braze에 업로드
+        csv_source: S3 키(from_s3=True) 또는 로컬 파일 경로(from_s3=False)
         """
         try:
             # CSV를 Braze 형식으로 변환
-            braze_attributes = self.convert_csv_to_braze_format(csv_file_path)
+            braze_attributes = self.convert_csv_to_braze_format(csv_source, from_s3=from_s3)
 
             if not braze_attributes:
                 logger.warning("업로드할 유효한 사용자 데이터가 없습니다.")
@@ -273,16 +305,22 @@ class BrazeUserUploader:
 
 
 def main():
-    # API_KEY = "e0293138-6884-4230-8d9c-d7676fa4a742"
-    API_KEY = "fbf4d3a0-49e4-4641-86e2-60d3948c7489"
-    CSV_FILE_PATH = "/Users/kevin/Downloads/braze_user_202510301036.csv"
+    # 환경 변수 또는 설정에서 값 가져오기
+    API_KEY = os.getenv('BRAZE_API_KEY', 'your-api-key-here')
+    S3_KEY = os.getenv('S3_CSV_KEY', 'backfill-csv/braze_user_202510281601.csv')
+    AWS_PROFILE = os.getenv('AWS_PROFILE', 'admin')
+    S3_BUCKET = os.getenv('S3_BUCKET', 'sparta-braze-currents')
 
     # Braze 업로더 생성
-    uploader = BrazeUserUploader(API_KEY)
+    uploader = BrazeUserUploader(
+        api_key=API_KEY,
+        aws_profile=AWS_PROFILE,
+        s3_bucket=S3_BUCKET
+    )
 
-    # CSV 파일에서 사용자 데이터 업로드
+    # S3에서 CSV 파일을 읽어 사용자 데이터 업로드
     logger.info("Braze 사용자 데이터 업로드 시작")
-    success = uploader.upload_from_csv(CSV_FILE_PATH, batch_size=50)
+    success = uploader.upload_from_csv(S3_KEY, batch_size=50, from_s3=True)
 
     if success:
         logger.info("모든 사용자 데이터가 성공적으로 업로드되었습니다.")
