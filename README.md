@@ -49,29 +49,41 @@ S3_BUCKET=sparta-braze-currents
 aws s3 cp your-file.csv s3://sparta-braze-currents/backfill-csv/
 ```
 
-2. Set the S3 key in environment variable or modify the script
-3. Run the script:
-
+2. Run the script with S3 key as argument:
 ```bash
-python user_backfill.py
+python user_backfill.py backfill-csv/braze_user_202510281601.csv
+```
+
+3. Optional parameters:
+```bash
+# Custom batch size
+python user_backfill.py backfill-csv/braze_user.csv --batch-size 100
+
+# Show help
+python user_backfill.py --help
 ```
 
 ### Using Local Files
 
-Modify the main function to use local files:
+Use the `--local` flag to read from local filesystem:
 
-```python
-success = uploader.upload_from_csv('/path/to/your/file.csv', batch_size=50, from_s3=False)
+```bash
+python user_backfill.py /path/to/your/file.csv --local
 ```
 
 ## Configuration
 
 The script can be configured via environment variables:
 
-- `BRAZE_API_KEY`: Your Braze API key
-- `S3_CSV_KEY`: S3 key of the CSV file (e.g., `backfill-csv/braze_user.csv`)
+- `BRAZE_API_KEY`: Your Braze API key (required)
 - `AWS_PROFILE`: AWS CLI profile name (default: `admin`)
 - `S3_BUCKET`: S3 bucket name (default: `sparta-braze-currents`)
+
+Command line arguments:
+
+- `s3_key`: S3 CSV 파일 키 또는 로컬 파일 경로 (required, positional argument)
+- `--batch-size`: 배치 크기 (optional, default: 50)
+- `--local`: 로컬 파일 모드 사용 (optional flag)
 
 ## CSV Format
 

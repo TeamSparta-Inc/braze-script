@@ -9,6 +9,7 @@ import logging
 import boto3
 from io import StringIO
 import os
+import argparse
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -305,9 +306,20 @@ class BrazeUserUploader:
 
 
 def main():
-    # 환경 변수 또는 설정에서 값 가져오기
-    API_KEY = os.getenv('BRAZE_API_KEY', 'your-api-key-here')
-    S3_KEY = os.getenv('S3_CSV_KEY', 'backfill-csv/braze_user_202510281601.csv')
+    # Command line arguments 파싱
+    parser = argparse.ArgumentParser(description='Braze 사용자 데이터 백필 스크립트')
+    parser.add_argument('s3_key', type=str, help='S3 CSV 파일 키 (예: backfill-csv/braze_user.csv)')
+    parser.add_argument('--batch-size', type=int, default=50, help='배치 크기 (기본값: 50)')
+    parser.add_argument('--local', action='store_true', help='로컬 파일 사용 (S3 대신)')
+
+    args = parser.parse_args()
+
+    # 환경 변수에서 설정 가져오기
+    API_KEY = os.getenv('BRAZE_API_KEY')
+    if not API_KEY:
+        logger.error("BRAZE_API_KEY 환경 변수가 설정되지 않았습니다.")
+        return
+
     AWS_PROFILE = os.getenv('AWS_PROFILE', 'admin')
     S3_BUCKET = os.getenv('S3_BUCKET', 'sparta-braze-currents')
 
@@ -318,9 +330,15 @@ def main():
         s3_bucket=S3_BUCKET
     )
 
-    # S3에서 CSV 파일을 읽어 사용자 데이터 업로드
+    # CSV 파일에서 사용자 데이터 업로드
     logger.info("Braze 사용자 데이터 업로드 시작")
-    success = uploader.upload_from_csv(S3_KEY, batch_size=50, from_s3=True)
+    logger.info(f"파일: {args.s3_key}, 배치 크기: {args.batch_size}, 모드: {'로컬' if args.local else 'S3'}")
+
+    success = uploader.upload_from_csv(
+        args.s3_key,
+        batch_size=args.batch_size,
+        from_s3=not args.local
+    )
 
     if success:
         logger.info("모든 사용자 데이터가 성공적으로 업로드되었습니다.")
