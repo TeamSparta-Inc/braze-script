@@ -234,6 +234,8 @@ hh_latest_funnel_one AS (
   SELECT
     u._id AS external_id,
     name AS first_name,
+    u.birthyear AS birthyear,
+    u.birthday AS birthday,
     CASE
       WHEN country_code = '+82'
         THEN '+82' || REGEXP_REPLACE(phone, '^0', '')

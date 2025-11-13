@@ -10,6 +10,7 @@ import boto3
 from io import StringIO
 import os
 import argparse
+from dotenv import load_dotenv
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,7 +32,7 @@ class BrazeUserUploader:
         session = boto3.Session(profile_name=aws_profile)
         self.s3_client = session.client('s3')
 
-    def read_csv_from_s3(self, s3_key: str) -> pd.DataFrame:
+    def read_csv_from_s3(self, s3_key: str, dtype: dict = {}) -> pd.DataFrame:
         """
         S3에서 CSV 파일을 읽어서 DataFrame으로 반환
         """
@@ -43,7 +44,7 @@ class BrazeUserUploader:
             csv_content = response['Body'].read().decode('utf-8')
 
             # DataFrame으로 변환
-            df = pd.read_csv(StringIO(csv_content))
+            df = pd.read_csv(StringIO(csv_content), dtype=dtype)
             logger.info(f"총 {len(df)}개의 사용자 데이터를 읽었습니다.")
             return df
 
@@ -56,11 +57,13 @@ class BrazeUserUploader:
         CSV 파일을 읽어서 Braze API 형식으로 변환
         csv_source: S3 키(from_s3=True) 또는 로컬 파일 경로(from_s3=False)
         """
+        dtype = {'birthyear': str, 'birthday': str}
+
         if from_s3:
-            df = self.read_csv_from_s3(csv_source)
+            df = self.read_csv_from_s3(csv_source, dtype)
         else:
             logger.info(f"로컬 CSV 파일 읽기 시작: {csv_source}")
-            df = pd.read_csv(csv_source)
+            df = pd.read_csv(csv_source, dtype=dtype)
             logger.info(f"총 {len(df)}개의 사용자 데이터를 읽었습니다.")
 
         braze_attributes = []
@@ -183,6 +186,12 @@ class BrazeUserUploader:
                 if pd.notna(row.get('has_card')):
                     attributes['has_card'] = bool(row['has_card'])
 
+                # dob 처리
+                if pd.notna(row.get('birthyear')) and pd.notna(row.get('birthday')):
+                    birthyear = str(row['birthyear'])
+                    birthday = str(row['birthday'])
+                    attributes['dob'] = f"{birthyear}-{birthday[:2]}-{birthday[2:]}"
+
                 braze_attributes.append(attributes)
 
                 # 디버깅을 위한 로그 (처음 5개 행만)
@@ -191,6 +200,7 @@ class BrazeUserUploader:
                     logger.info(f"  - applied_business: {attributes.get('applied_business', 'N/A')}")
                     logger.info(f"  - in_progress_business: {attributes.get('in_progress_business', 'N/A')}")
                     logger.info(f"  - completed_business: {attributes.get('completed_business', 'N/A')}")
+                    logger.info(f"  - dob: {attributes.get('dob', 'N/A')}")
 
             except Exception as e:
                 logger.error(f"행 {index + 1} 처리 중 오류 발생: {str(e)}")
@@ -306,6 +316,9 @@ class BrazeUserUploader:
 
 
 def main():
+    # .env 파일 로드
+    load_dotenv()
+
     # Command line arguments 파싱
     parser = argparse.ArgumentParser(description='Braze 사용자 데이터 백필 스크립트')
     parser.add_argument('s3_key', type=str, help='S3 CSV 파일 키 (예: backfill-csv/braze_user.csv)')
