@@ -57,7 +57,7 @@ class BrazeUserUploader:
         CSV 파일을 읽어서 Braze API 형식으로 변환
         csv_source: S3 키(from_s3=True) 또는 로컬 파일 경로(from_s3=False)
         """
-        dtype = {'birthyear': str, 'birthday': str}
+        dtype = {'birthyear': str, 'birthday': str, 'phone': str}
 
         if from_s3:
             df = self.read_csv_from_s3(csv_source, dtype)
