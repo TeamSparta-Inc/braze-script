@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class BrazeUserUploader:
     def __init__(self, api_key: str, base_url: str = "https://rest.iad-07.braze.com",
-                 aws_profile: str = "admin", s3_bucket: str = "sparta-braze-currents"):
+                 aws_profile: str = None, s3_bucket: str = "sparta-braze-currents"):
         self.api_key = api_key
         self.base_url = base_url
         self.headers = {
@@ -29,7 +29,10 @@ class BrazeUserUploader:
         self.s3_bucket = s3_bucket
 
         # S3 클라이언트 초기화
-        session = boto3.Session(profile_name=aws_profile)
+        if aws_profile:
+            session = boto3.Session(profile_name=aws_profile)
+        else:
+            session = boto3.Session()
         self.s3_client = session.client('s3')
 
     def read_csv_from_s3(self, s3_key: str, dtype: dict = {}) -> pd.DataFrame:
@@ -333,7 +336,7 @@ def main():
         logger.error("BRAZE_API_KEY 환경 변수가 설정되지 않았습니다.")
         return
 
-    AWS_PROFILE = os.getenv('AWS_PROFILE', 'admin')
+    AWS_PROFILE = os.getenv('AWS_PROFILE')
     S3_BUCKET = os.getenv('S3_BUCKET', 'sparta-braze-currents')
 
     # Braze 업로더 생성
