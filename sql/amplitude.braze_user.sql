@@ -23,7 +23,9 @@ applied_business AS (
     external_id,
     '[' || LISTAGG(DISTINCT '"' || applied || '"', ',')
           WITHIN GROUP (ORDER BY applied)
-    || ']' AS applied_business
+    || ']' AS applied_business,
+    -- 첫 번째 applied 값을 business fallback으로 사용 (business 누락 케이스 대응)
+    MIN(applied) AS first_applied_business
   FROM applicants
   GROUP BY external_id
 ),
@@ -245,7 +247,8 @@ hh_latest_funnel_one AS (
     'active' AS user_type,
     u.marketing AS is_marketing,
     CAST(COALESCE(u.created_at, u.last_login_at, u.marketing_date) AS DATE) AS signup_date,
-    b.business,
+    -- business가 없으면 applied_business의 첫 번째 값을 fallback으로 사용 (41,427명 커버)
+    COALESCE(b.business, ab.first_applied_business) AS business,
     COALESCE(ab.applied_business,   '[]') AS applied_business,
     COALESCE(ip.in_progress_business,'[]') AS in_progress_business,
     COALESCE(c.completed_business,  '[]') AS completed_business,
