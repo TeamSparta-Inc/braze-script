@@ -38,21 +38,22 @@ class BrazeUserUploader:
 
     def validate_phone_number(self, phone: str, identifier: str = "") -> bool:
         """
-        전화번호 형식 검증
-        - +82로 시작해야 함
-        - + 제외하고 숫자만 포함
-        - 총 12-13자리 ('+82' + 9-10자리 번호)
+        E.164 형식 전화번호 검증 (https://www.braze.com/docs/user_guide/message_building_by_channel/sms_mms_rcs/user_phone_numbers)
+        - + 기호로 시작
+        - 최대 15자리 숫자 (+ 제외)
+        - 숫자만 포함 (공백, 하이픈 등 특수문자 없음)
+        - 첫 숫자는 0이 아님
         """
         if not phone:
             return True
 
-        # 패턴: +82로 시작, 그 뒤에 9-10자리 숫자
-        pattern = r'^\+82\d{9,10}$'
+        # E.164 패턴: +로 시작, 1-9로 시작하는 1-15자리 숫자
+        pattern = r'^\+[1-9]\d{1,14}$'
 
         if not re.match(pattern, phone):
             logger.warning(
                 f"잘못된 전화번호 형식 감지 - {identifier}: '{phone}' "
-                f"(예상 형식: +82XXXXXXXXX)"
+                f"(E.164 형식 필요: +로 시작, 최대 15자리 숫자, 예: +821012345678)"
             )
             return False
 
