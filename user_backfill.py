@@ -11,6 +11,7 @@ from io import StringIO
 import os
 import argparse
 from dotenv import load_dotenv
+import re
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,6 +35,28 @@ class BrazeUserUploader:
         else:
             session = boto3.Session()
         self.s3_client = session.client('s3')
+
+    def validate_phone_number(self, phone: str, identifier: str = "") -> bool:
+        """
+        전화번호 형식 검증
+        - +82로 시작해야 함
+        - + 제외하고 숫자만 포함
+        - 총 12-13자리 ('+82' + 9-10자리 번호)
+        """
+        if not phone:
+            return True
+
+        # 패턴: +82로 시작, 그 뒤에 9-10자리 숫자
+        pattern = r'^\+82\d{9,10}$'
+
+        if not re.match(pattern, phone):
+            logger.warning(
+                f"잘못된 전화번호 형식 감지 - {identifier}: '{phone}' "
+                f"(예상 형식: +82XXXXXXXXX)"
+            )
+            return False
+
+        return True
 
     def read_csv_from_s3(self, s3_key: str, dtype: dict = {}) -> pd.DataFrame:
         """
@@ -227,6 +250,12 @@ class BrazeUserUploader:
 
             logger.info(f"배치 {batch_num}/{total_batches} 처리 중... ({len(batch)}개 사용자)")
 
+            # 전화번호 형식 검증
+            for attr in batch:
+                if 'phone' in attr:
+                    identifier = attr.get('email') or attr.get('external_id') or f"index_{i + batch.index(attr)}"
+                    self.validate_phone_number(attr['phone'], identifier)
+
             payload = {
                 "attributes": batch
             }
@@ -247,8 +276,8 @@ class BrazeUserUploader:
                     error_count += len(batch)
                     failed_batches.append((batch_num, batch, payload))
 
-                # API 레이트 리미트를 위한 대기
-                time.sleep(0.1)
+                # API 레이트 리미트를 위한 대기 (50ms → 200ms로 증가)
+                time.sleep(0.5)
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"배치 {batch_num} 요청 실패: {str(e)}")
@@ -283,8 +312,8 @@ class BrazeUserUploader:
                         logger.error(json.dumps(payload, indent=2, ensure_ascii=False))
                         retry_error_count += len(batch)
 
-                    # API 레이트 리미트를 위한 대기
-                    time.sleep(0.2)
+                    # API 레이트 리미트를 위한 대기 (재시도 시 더 긴 대기)
+                    time.sleep(0.5)
 
                 except requests.exceptions.RequestException as e:
                     logger.error(f"배치 {batch_num} 재시도 요청 실패: {str(e)}")
